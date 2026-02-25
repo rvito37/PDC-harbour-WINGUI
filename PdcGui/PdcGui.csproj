@@ -8,8 +8,23 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <PlatformTarget>x86</PlatformTarget>
+  </PropertyGroup>
+
   <ItemGroup>
+    <PackageReference Include="Advantage.Data.Provider" Version="8.10.1.2" />
     <PackageReference Include="DbfDataReader" Version="1.0.0" />
+  </ItemGroup>
+
+  <!-- Copy ADS native DLLs to output root (next to PdcGui.exe) -->
+  <ItemGroup>
+    <None Include="ADS\ace32.dll" Link="ace32.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="ADS\adsloc32.dll" Link="adsloc32.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="ADS\axcws32.dll" Link="axcws32.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="ADS\adslocal.cfg" Link="adslocal.cfg" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="ADS\ansi.chr" Link="ansi.chr" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="ADS\extend.chr" Link="extend.chr" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

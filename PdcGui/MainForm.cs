@@ -1,5 +1,7 @@
 using System.Data;
+using System.Data.Common;
 using System.Text;
+using Advantage.Data.Provider;
 
 namespace PdcGui;
 
@@ -10,9 +12,11 @@ public class MainForm : Form
     private ToolStripStatusLabel statusLabel = null!;
     private ToolStripStatusLabel userLabel = null!;
     private ToolStripStatusLabel clockLabel = null!;
+    private ToolStripStatusLabel adsLabel = null!;
     private DataGridView mainGrid = null!;
     private System.Windows.Forms.Timer clockTimer = null!;
     private string currentUser = "UNKNOWN";
+    private bool adsAvailable = false;
 
     public MainForm(string userName)
     {
@@ -119,7 +123,11 @@ public class MainForm : Form
         {
             BorderSides = ToolStripStatusLabelBorderSides.Left,
         };
-        statusStrip.Items.AddRange(new ToolStripItem[] { statusLabel, userLabel, clockLabel });
+        adsLabel = new ToolStripStatusLabel("ADS: checking...")
+        {
+            BorderSides = ToolStripStatusLabelBorderSides.Left,
+        };
+        statusStrip.Items.AddRange(new ToolStripItem[] { statusLabel, adsLabel, userLabel, clockLabel });
 
         // --- Clock Timer ---
         clockTimer = new System.Windows.Forms.Timer { Interval = 1000 };
@@ -147,6 +155,28 @@ public class MainForm : Form
 
         // --- Welcome ---
         SetStatus($"Welcome, {currentUser}. PDC GUI ready.");
+
+        // --- Check ADS availability ---
+        CheckAdsAvailability();
+    }
+
+    private void CheckAdsAvailability()
+    {
+        try
+        {
+            // Try to load ADS — just instantiate, no connection needed
+            var testConn = new AdsConnection();
+            testConn.Dispose();
+            adsAvailable = true;
+            adsLabel.Text = "ADS: Local";
+            adsLabel.ForeColor = Color.DarkGreen;
+        }
+        catch
+        {
+            adsAvailable = false;
+            adsLabel.Text = "ADS: N/A (using DbfReader)";
+            adsLabel.ForeColor = Color.DarkRed;
+        }
     }
 
     // ===== Helper =====
@@ -172,13 +202,13 @@ public class MainForm : Form
             MessageBoxIcon.Information);
     }
 
-    // ===== Open DBF — working feature =====
+    // ===== Open DBF — ADS primary, DbfDataReader fallback =====
     private void OnOpenDbf(object? sender, EventArgs e)
     {
         using var dlg = new OpenFileDialog
         {
             Title = "Open DBF Table",
-            Filter = "dBASE files (*.dbf)|*.dbf|All files (*.*)|*.*",
+            Filter = "dBASE/DAT files (*.dbf;*.dat)|*.dbf;*.dat|All files (*.*)|*.*",
             InitialDirectory = @"C:\Users\AVXUser\PDC-clean\BMS"
         };
 
@@ -189,50 +219,28 @@ public class MainForm : Form
             SetStatus($"Loading {Path.GetFileName(dlg.FileName)}...");
             Cursor = Cursors.WaitCursor;
 
-            var dt = new DataTable();
-            // Register code page 862 for Hebrew OEM
-            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            DataTable dt;
+            int count;
+            string engine;
 
-            var options = new DbfDataReader.DbfDataReaderOptions
+            if (adsAvailable)
             {
-                SkipDeletedRecords = true,
-                Encoding = Encoding.GetEncoding(862)
-            };
-            using var dbfReader = new DbfDataReader.DbfDataReader(dlg.FileName, options);
-
-            // Build columns from reader schema
-            for (int i = 0; i < dbfReader.FieldCount; i++)
-            {
-                dt.Columns.Add(new DataColumn(dbfReader.GetName(i), typeof(string)));
+                (dt, count) = LoadViaAds(dlg.FileName);
+                engine = "ADS";
             }
-
-            // Read records
-            int count = 0;
-            while (dbfReader.Read() && count < 10000) // limit for safety
+            else
             {
-                var row = dt.NewRow();
-                for (int i = 0; i < dbfReader.FieldCount; i++)
-                {
-                    try
-                    {
-                        row[i] = dbfReader.IsDBNull(i) ? DBNull.Value : dbfReader.GetValue(i)?.ToString() ?? "";
-                    }
-                    catch
-                    {
-                        row[i] = DBNull.Value;
-                    }
-                }
-                dt.Rows.Add(row);
-                count++;
+                (dt, count) = LoadViaDbfReader(dlg.FileName);
+                engine = "DbfReader";
             }
 
             mainGrid.DataSource = dt;
             Text = $"AVX PDC — {Path.GetFileName(dlg.FileName)} ({count} records)";
-            SetStatus($"Loaded {Path.GetFileName(dlg.FileName)}: {count} records, {dt.Columns.Count} columns");
+            SetStatus($"[{engine}] Loaded {Path.GetFileName(dlg.FileName)}: {count} records, {dt.Columns.Count} columns");
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Error reading DBF:\n{ex.Message}", "Error",
+            MessageBox.Show($"Error reading DBF:\n{ex.Message}\n\n{ex.GetType().Name}", "Error",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             SetStatus("Error loading file");
         }
@@ -240,6 +248,62 @@ public class MainForm : Form
         {
             Cursor = Cursors.Default;
         }
+    }
+
+    private (DataTable dt, int count) LoadViaAds(string filePath)
+    {
+        var dt = new DataTable();
+        string dir = Path.GetDirectoryName(filePath) ?? ".";
+        string file = Path.GetFileName(filePath);
+
+        string connStr = $"Data Source={dir};ServerType=LOCAL;TableType=CDX;LockMode=COMPATIBLE;CharType=OEM;TrimTrailingSpaces=TRUE;";
+        using var conn = new AdsConnection(connStr);
+        conn.Open();
+
+        using var cmd = new AdsCommand($"SELECT * FROM \"{file}\"", conn);
+        using var adapter = new AdsDataAdapter(cmd);
+
+        int count = adapter.Fill(dt);
+        return (dt, count);
+    }
+
+    private (DataTable dt, int count) LoadViaDbfReader(string filePath)
+    {
+        var dt = new DataTable();
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+
+        var options = new DbfDataReader.DbfDataReaderOptions
+        {
+            SkipDeletedRecords = true,
+            Encoding = Encoding.GetEncoding(862)
+        };
+        using var dbfReader = new DbfDataReader.DbfDataReader(filePath, options);
+
+        for (int i = 0; i < dbfReader.FieldCount; i++)
+        {
+            dt.Columns.Add(new DataColumn(dbfReader.GetName(i), typeof(string)));
+        }
+
+        int count = 0;
+        while (dbfReader.Read() && count < 10000)
+        {
+            var row = dt.NewRow();
+            for (int i = 0; i < dbfReader.FieldCount; i++)
+            {
+                try
+                {
+                    row[i] = dbfReader.IsDBNull(i) ? DBNull.Value : dbfReader.GetValue(i)?.ToString() ?? "";
+                }
+                catch
+                {
+                    row[i] = DBNull.Value;
+                }
+            }
+            dt.Rows.Add(row);
+            count++;
+        }
+
+        return (dt, count);
     }
 
     // ===== Batch Operations (stubs) =====
