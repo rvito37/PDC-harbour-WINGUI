@@ -32,20 +32,24 @@ public class StockInProcForm : Form
 
     // Sort modes matching Harbour CDX index tags
     // [0]=tag name (display), [1]=display label, [2]=SQL ORDER BY clause
-    // The CDX indexes have FOR !(b_stat$"CDMT") — we replicate this in WHERE clause.
-    // ISLACK index key:   SubStr(islack,1,22)  — islack is a stored field in DBF
-    // QCISLACK index key: SubStr(qcislack,1,22) — qcislack is a stored field in DBF
-    // NWISLACK index key: cpproc_id+ptype_id+pline_id+size_id+...+b_prior+slack+purp
+    // CDX indexes have FOR !(b_stat$"CDMT") — replicated via UPPER(B_stat) NOT IN ('C','D','M','T')
+    // ISLACK:   stored field 'islack' in DBF — ORDER BY islack
+    // QCISLACK: stored field 'qcislack' in DBF — ORDER BY qcislack
+    // NWISLACK: computed key cpproc_id+ptype_id+pline_id+size_id+b_prior+STR(slack)+purp
     private readonly string[][] sortModes = new[]
     {
         new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N", "islack" },
-        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp", "ptype_id, pline_id, size_id, b_prior, b_dprom, b_purp, b_id" },
+        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp",
+                "ptype_id, pline_id, size_id, b_prior, STR(100000+(b_dprom-ExpFinDate),6), " +
+                "IF(b_purp=CHR(55),CHR(50),IF(b_purp=CHR(54),CHR(51),b_purp)), b_id" },
     };
     private readonly string[][] sortModes190 = new[]
     {
         new[] { "QCISLACK", "Stat+Prior+Slack+Purp+B/N", "qcislack" },
         new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N", "islack" },
-        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp", "ptype_id, pline_id, size_id, b_prior, b_dprom, b_purp, b_id" },
+        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp",
+                "ptype_id, pline_id, size_id, b_prior, STR(100000+(b_dprom-ExpFinDate),6), " +
+                "IF(b_purp=CHR(55),CHR(50),IF(b_purp=CHR(54),CHR(51),b_purp)), b_id" },
     };
     private int currentSortIndex = 0;
 
@@ -299,12 +303,14 @@ public class StockInProcForm : Form
     }
 
     /// <summary>
-    /// Load WIP data using ADS SQL with index-field ordering — matches original Harbour:
-    ///   d_line->(ordsetfocus("ISLACK"))  →  ORDER BY islack
-    ///   d_line->(dbseek(cProc))          →  WHERE CpProc_id = :proc
-    ///   FOR !(b_stat$"CDMT")             →  AND UPPER(B_stat) NOT IN ('C','D','M','T')
-    /// The CDX indexes have FOR !(b_stat$"CDMT") baked in, so we replicate that filter.
-    /// ORDER BY uses the stored islack/qcislack fields or NWISLACK field expressions.
+    /// Load WIP data via ADS SQL, replicating CDX index behavior:
+    ///   ordsetfocus("ISLACK")   →  ORDER BY islack  (stored field = CDX key)
+    ///   ordsetfocus("QCISLACK") →  ORDER BY qcislack
+    ///   ordsetfocus("NWISLACK") →  ORDER BY (computed expression matching CDX key)
+    ///   dbseek(cProc)           →  WHERE CpProc_id = :proc
+    ///   FOR !(b_stat$"CDMT")    →  AND UPPER(B_stat) NOT IN ('C','D','M','T')
+    /// Note: AdsExtendedReader ISAM Seek/SetRange fails with Error 7038 on conditional
+    /// CDX indexes, so we use SQL with the stored index fields for equivalent results.
     /// </summary>
     private void LoadWipData(string procId)
     {
@@ -338,7 +344,8 @@ public class StockInProcForm : Form
             row["P_Line"] = reader["pLine_id"]?.ToString()?.Trim() ?? "";
             row["Bt"] = reader["B_type"]?.ToString()?.Trim() ?? "";
             row["Size"] = reader["Size_id"]?.ToString()?.Trim() ?? "";
-            row["Val"] = reader["Value_id"]?.ToString()?.Trim() ?? "";
+            try { row["Val"] = Convert.ToDecimal(reader["Value_id"]); }
+            catch { row["Val"] = 0m; }
 
             // Numeric fields
             row["Wafers"] = GetInt(reader, "Cp_bQtyW");
@@ -400,7 +407,7 @@ public class StockInProcForm : Form
         dt.Columns.Add("P_Line", typeof(string));
         dt.Columns.Add("Bt", typeof(string));
         dt.Columns.Add("Size", typeof(string));
-        dt.Columns.Add("Val", typeof(string));
+        dt.Columns.Add("Val", typeof(decimal));
         dt.Columns.Add("Wafers", typeof(int));
         dt.Columns.Add("Strips", typeof(int));
         dt.Columns.Add("Pcs", typeof(int));
@@ -452,7 +459,7 @@ public class StockInProcForm : Form
             ("P_Line",        55),
             ("Bt",            30),
             ("Size",          50),
-            ("Val",           40),
+            ("Val",           80),
             ("Wafers",        60),
             ("Strips",        65),
             ("Pcs",           85),
@@ -478,10 +485,18 @@ public class StockInProcForm : Form
                 grid.Columns[name]!.Width = width;
                 order++;
 
-                if (name is "Wafers" or "Strips" or "Pcs" or "Days_In_Proc" or "Slack" or "#")
+                if (name is "Wafers" or "Strips" or "Pcs" or "Days_In_Proc" or "Slack" or "#" or "Val")
                     grid.Columns[name]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
             }
         }
+
+        // Number formatting matching Harbour Transform patterns
+        if (grid.Columns.Contains("Val"))
+            grid.Columns["Val"]!.DefaultCellStyle.Format = "N3";     // Harbour: Value_id (decimal 9,3)
+        if (grid.Columns.Contains("Strips"))
+            grid.Columns["Strips"]!.DefaultCellStyle.Format = "N0";  // Harbour: Transform(,"99,999")
+        if (grid.Columns.Contains("Pcs"))
+            grid.Columns["Pcs"]!.DefaultCellStyle.Format = "N0";     // Harbour: Transform(,"9,999,999")
     }
 
     // === Cell formatting: grey out started batches (Cp_dSta not empty) ===
