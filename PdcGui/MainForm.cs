@@ -331,8 +331,24 @@ public class MainForm : Form
     private void OnReprintBN(object? sender, EventArgs e) => ShowNotImplemented("Reprint Completion");
     private void OnBatchLocation(object? sender, EventArgs e) => ShowNotImplemented("Batch Location");
 
-    // ===== Queries (stubs) =====
-    private void OnStockInProc(object? sender, EventArgs e) => ShowNotImplemented("WIP by Process (StockInProc)");
+    // ===== Queries =====
+    private void OnStockInProc(object? sender, EventArgs e)
+    {
+        string dataDir = @"C:\Users\AVXUser\BMS\DATA";
+        if (!Directory.Exists(dataDir))
+        {
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = "Select folder containing D_LINE.DBF, C_PROC.DBF",
+                UseDescriptionForTitle = true,
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            dataDir = dlg.SelectedPath;
+        }
+
+        var form = new StockInProcForm(dataDir);
+        form.ShowDialog(this);
+    }
     private void OnStockInWork(object? sender, EventArgs e) => ShowNotImplemented("WIP by Workstation (StockInWork)");
     private void OnBatchPath(object? sender, EventArgs e) => ShowNotImplemented("Batch Path Query (BNpath)");
     private void OnShipQuery(object? sender, EventArgs e) => ShowNotImplemented("Shipments Query (ShpQuery)");
