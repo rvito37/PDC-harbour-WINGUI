@@ -164,17 +164,21 @@ public class MainForm : Form
     {
         try
         {
-            // Try to load ADS — just instantiate, no connection needed
-            var testConn = new AdsConnection();
-            testConn.Dispose();
+            // Real test: open a connection to LOCAL server against app directory
+            // This forces ace32.dll to load and verifies it actually works
+            string testDir = Path.GetDirectoryName(Application.ExecutablePath) ?? ".";
+            string connStr = $"Data Source={testDir};ServerType=LOCAL;TableType=CDX;";
+            using var testConn = new AdsConnection(connStr);
+            testConn.Open();
+            testConn.Close();
             adsAvailable = true;
-            adsLabel.Text = "ADS: Local";
+            adsLabel.Text = "ADS: Local (ace32.dll loaded)";
             adsLabel.ForeColor = Color.DarkGreen;
         }
-        catch
+        catch (Exception ex)
         {
             adsAvailable = false;
-            adsLabel.Text = "ADS: N/A (using DbfReader)";
+            adsLabel.Text = $"ADS: N/A — {ex.Message}";
             adsLabel.ForeColor = Color.DarkRed;
         }
     }
@@ -260,10 +264,23 @@ public class MainForm : Form
         using var conn = new AdsConnection(connStr);
         conn.Open();
 
-        using var cmd = new AdsCommand($"SELECT * FROM \"{file}\"", conn);
+        // First get total count
+        using var countCmd = new AdsCommand($"SELECT COUNT(*) FROM \"{file}\"", conn);
+        int totalCount = (int)countCmd.ExecuteScalar();
+
+        // Load with TOP limit for large tables
+        string sql = totalCount > 10000
+            ? $"SELECT TOP 10000 * FROM \"{file}\""
+            : $"SELECT * FROM \"{file}\"";
+
+        using var cmd = new AdsCommand(sql, conn);
         using var adapter = new AdsDataAdapter(cmd);
 
         int count = adapter.Fill(dt);
+
+        if (totalCount > 10000)
+            SetStatus($"[ADS] Showing {count} of {totalCount} records (limited for performance)...");
+
         return (dt, count);
     }
 
