@@ -5,7 +5,7 @@ namespace PdcGui;
 
 /// <summary>
 /// WIP by Process query screen — migrated from Harbour STOKPROC.PRG
-/// Shows all batches currently at a selected process, with totals.
+/// Uses ADS SQL with CDX index field ordering, matching original Harbour sort/filter behavior.
 /// Read-only view. Data source: D_LINE.DBF + C_PROC.DBF via ADS.
 /// </summary>
 public class StockInProcForm : Form
@@ -24,23 +24,28 @@ public class StockInProcForm : Form
     private Button btnQuery = null!;
     private Button btnTotals = null!;
     private Button btnSearch = null!;
+
     // Data
     private DataTable? dtProcesses;
     private DataTable? dtResult;
     private string currentProcessId = "";
-    private int totalRecords = 0;
 
-    // Sort indices matching Harbour CDX tags
+    // Sort modes matching Harbour CDX index tags
+    // [0]=tag name (display), [1]=display label, [2]=SQL ORDER BY clause
+    // The CDX indexes have FOR !(b_stat$"CDMT") — we replicate this in WHERE clause.
+    // ISLACK index key:   SubStr(islack,1,22)  — islack is a stored field in DBF
+    // QCISLACK index key: SubStr(qcislack,1,22) — qcislack is a stored field in DBF
+    // NWISLACK index key: cpproc_id+ptype_id+pline_id+size_id+...+b_prior+slack+purp
     private readonly string[][] sortModes = new[]
     {
-        new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N",           "B_prior, B_dprom, B_purp, B_stat, B_id" },
-        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp",     "B_type, pLine_id, Size_id, B_prior, B_dprom, B_purp" },
+        new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N", "islack" },
+        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp", "ptype_id, pline_id, size_id, b_prior, b_dprom, b_purp, b_id" },
     };
     private readonly string[][] sortModes190 = new[]
     {
-        new[] { "QCISLACK", "Stat+Prior+Slack+Purp+B/N",           "B_stat, B_prior, B_dprom, B_purp, B_id" },
-        new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N",           "B_prior, B_dprom, B_stat, B_purp, B_id" },
-        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp",     "B_type, pLine_id, Size_id, B_prior, B_dprom, B_purp" },
+        new[] { "QCISLACK", "Stat+Prior+Slack+Purp+B/N", "qcislack" },
+        new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N", "islack" },
+        new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp", "ptype_id, pline_id, size_id, b_prior, b_dprom, b_purp, b_id" },
     };
     private int currentSortIndex = 0;
 
@@ -259,7 +264,7 @@ public class StockInProcForm : Form
             currentProcessId = procId;
             currentSortIndex = 0;
 
-            // Query D_LINE
+            // Query D_LINE via index seek
             LoadWipData(procId);
 
             // Enable buttons
@@ -293,20 +298,82 @@ public class StockInProcForm : Form
         return "";
     }
 
+    /// <summary>
+    /// Load WIP data using ADS SQL with index-field ordering — matches original Harbour:
+    ///   d_line->(ordsetfocus("ISLACK"))  →  ORDER BY islack
+    ///   d_line->(dbseek(cProc))          →  WHERE CpProc_id = :proc
+    ///   FOR !(b_stat$"CDMT")             →  AND UPPER(B_stat) NOT IN ('C','D','M','T')
+    /// The CDX indexes have FOR !(b_stat$"CDMT") baked in, so we replicate that filter.
+    /// ORDER BY uses the stored islack/qcislack fields or NWISLACK field expressions.
+    /// </summary>
     private void LoadWipData(string procId)
     {
         string connStr = $"Data Source={dataDir};ServerType=LOCAL;TableType=CDX;LockMode=COMPATIBLE;CharType=OEM;TrimTrailingSpaces=TRUE;";
         using var conn = new AdsConnection(connStr);
         conn.Open();
 
-        // Count total records for this process
-        using var countCmd = new AdsCommand(
-            $"SELECT COUNT(*) FROM \"D_LINE.DBF\" WHERE CpProc_id = '{procId}'", conn);
-        totalRecords = (int)countCmd.ExecuteScalar();
+        var sortModeArray = (procId.Trim() == "190.0") ? sortModes190 : sortModes;
+        string indexTag = sortModeArray[currentSortIndex][0];
+        string orderBy = sortModeArray[currentSortIndex][2];
 
-        if (totalRecords == 0)
+        // SQL query: filter by process + exclude CDMT statuses (matching CDX FOR condition)
+        // ORDER BY the index field for correct sort order
+        string sql = $"SELECT * FROM \"D_LINE.DBF\" WHERE CpProc_id = '{procId}' " +
+                     $"AND UPPER(B_stat) NOT IN ('C','D','M','T') ORDER BY {orderBy}";
+
+        using var cmd = new AdsCommand(sql, conn);
+        using var reader = cmd.ExecuteReader();
+
+        dtResult = BuildDataTable();
+        int rowNum = 0;
+
+        while (reader.Read())
         {
-            MessageBox.Show("No records found for this process!", "Empty",
+            rowNum++;
+            var row = dtResult.NewRow();
+            row["#"] = rowNum;
+            row["Batch"] = reader["B_id"]?.ToString()?.Trim() ?? "";
+            row["Pu"] = reader["B_purp"]?.ToString()?.Trim() ?? "";
+            row["St"] = reader["B_stat"]?.ToString()?.Trim() ?? "";
+            row["P_Line"] = reader["pLine_id"]?.ToString()?.Trim() ?? "";
+            row["Bt"] = reader["B_type"]?.ToString()?.Trim() ?? "";
+            row["Size"] = reader["Size_id"]?.ToString()?.Trim() ?? "";
+            row["Val"] = reader["Value_id"]?.ToString()?.Trim() ?? "";
+
+            // Numeric fields
+            row["Wafers"] = GetInt(reader, "Cp_bQtyW");
+            row["Strips"] = GetInt(reader, "Cp_bQtyS");
+            row["Pcs"] = GetInt(reader, "Cp_bQtyP");
+
+            // Date fields
+            var arrDate = GetDate(reader, "Cp_dArr");
+            row["Arrive_Date"] = arrDate.HasValue ? arrDate.Value : DBNull.Value;
+            if (arrDate.HasValue)
+                row["Days_In_Proc"] = (DateTime.Today - arrDate.Value).Days;
+
+            var promDate = GetDate(reader, "B_dprom");
+            if (promDate.HasValue)
+                row["Slack"] = (promDate.Value - DateTime.Today).Days;
+
+            // Priority = B_prior + B_wkprom (concatenated like Harbour)
+            string prior = reader["B_prior"]?.ToString()?.Trim() ?? "";
+            string wkprom = reader["B_wkprom"]?.ToString()?.Trim() ?? "";
+            row["Priority"] = prior + wkprom;
+
+            row["Delivered_By"] = reader["Pp_widFin"]?.ToString()?.Trim() ?? "";
+            row["Received_By"] = reader["Cp_widArr"]?.ToString()?.Trim() ?? "";
+            row["Comments"] = reader["B_remark"]?.ToString()?.Trim() ?? "";
+
+            // Hidden columns for formatting
+            var startedDate = GetDate(reader, "Cp_dSta");
+            row["Started"] = startedDate.HasValue ? startedDate.Value : DBNull.Value;
+
+            dtResult.Rows.Add(row);
+        }
+
+        if (dtResult.Rows.Count == 0)
+        {
+            MessageBox.Show("No active records found for this process!", "Empty",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             grid.DataSource = null;
             countLabel.Text = "Records: 0";
@@ -314,98 +381,61 @@ public class StockInProcForm : Form
             return;
         }
 
-        // Harbour original: browse only shows active batches (not C=Completed, D=Deleted)
-        string sql = $@"SELECT
-            B_id       AS [Batch],
-            B_purp     AS [Pu],
-            B_stat     AS [St],
-            pLine_id   AS [P_Line],
-            B_type     AS [Bt],
-            Size_id    AS [Size],
-            Value_id   AS [Val],
-            Cp_bQtyW   AS [Wafers],
-            Cp_bQtyS   AS [Strips],
-            Cp_bQtyP   AS [Pcs],
-            Cp_dArr    AS [Arrive_Date],
-            B_prior    AS [Prior],
-            B_wkprom   AS [WkProm],
-            B_dprom    AS [Promise_Date],
-            Pp_widFin  AS [Delivered_By],
-            Cp_widArr  AS [Received_By],
-            B_remark   AS [Comments],
-            Cp_dSta    AS [Started],
-            CpProc_id  AS [Proc_ID]
-            FROM ""D_LINE.DBF""
-            WHERE CpProc_id = '{procId}'
-            AND UPPER(B_stat) NOT IN ('C','D')";
-
-        // Apply sort order
-        var sortModeArray = (procId.Trim() == "190.0") ? sortModes190 : sortModes;
-        if (currentSortIndex < sortModeArray.Length)
-            sql += $" ORDER BY {sortModeArray[currentSortIndex][2]}";
-
-        using var cmd = new AdsCommand(sql, conn);
-        using var adapter = new AdsDataAdapter(cmd);
-        dtResult = new DataTable();
-        adapter.Fill(dtResult);
-
-        // Add computed columns
-        AddComputedColumns();
-
         // Bind to grid
         grid.DataSource = null;
         grid.DataSource = dtResult;
-
-        // Configure columns visibility and order
         ConfigureGridColumns();
 
-        countLabel.Text = $"Records: {dtResult.Rows.Count} of {totalRecords} total";
-        statusLabel.Text = $"WIP for process {procId.Trim()} — {lblProcessName.Text} — {dtResult.Rows.Count} active batches";
+        countLabel.Text = $"Records: {dtResult.Rows.Count}";
+        statusLabel.Text = $"WIP for process {procId.Trim()} — {lblProcessName.Text} — {dtResult.Rows.Count} active batches [{indexTag}]";
     }
 
-    private void AddComputedColumns()
+    private static DataTable BuildDataTable()
     {
-        if (dtResult == null) return;
+        var dt = new DataTable();
+        dt.Columns.Add("#", typeof(int));
+        dt.Columns.Add("Batch", typeof(string));
+        dt.Columns.Add("Pu", typeof(string));
+        dt.Columns.Add("St", typeof(string));
+        dt.Columns.Add("P_Line", typeof(string));
+        dt.Columns.Add("Bt", typeof(string));
+        dt.Columns.Add("Size", typeof(string));
+        dt.Columns.Add("Val", typeof(string));
+        dt.Columns.Add("Wafers", typeof(int));
+        dt.Columns.Add("Strips", typeof(int));
+        dt.Columns.Add("Pcs", typeof(int));
+        dt.Columns.Add("Arrive_Date", typeof(DateTime));
+        dt.Columns.Add("Days_In_Proc", typeof(int));
+        dt.Columns.Add("Priority", typeof(string));
+        dt.Columns.Add("Slack", typeof(int));
+        dt.Columns.Add("Delivered_By", typeof(string));
+        dt.Columns.Add("Received_By", typeof(string));
+        dt.Columns.Add("Comments", typeof(string));
+        dt.Columns.Add("Started", typeof(DateTime)); // hidden, for color coding
+        return dt;
+    }
 
-        // Row number
-        var colRow = new DataColumn("#", typeof(int));
-        dtResult.Columns.Add(colRow);
-
-        // Days in Process = Today - Cp_dArr
-        var colDays = new DataColumn("Days_In_Proc", typeof(int));
-        dtResult.Columns.Add(colDays);
-
-        // Slack = B_dprom - Today (simplified; Harbour version subtracts lead time too)
-        var colSlack = new DataColumn("Slack", typeof(int));
-        dtResult.Columns.Add(colSlack);
-
-        // Priority display = B_prior + B_wkprom
-        var colPriority = new DataColumn("Priority", typeof(string));
-        dtResult.Columns.Add(colPriority);
-
-        int rowNum = 0;
-        foreach (DataRow row in dtResult.Rows)
+    private static int GetInt(System.Data.IDataReader reader, string field)
+    {
+        try
         {
-            rowNum++;
-            row["#"] = rowNum;
-
-            // Days in process
-            if (row["Arrive_Date"] != DBNull.Value && row["Arrive_Date"] is DateTime arrDate)
-            {
-                row["Days_In_Proc"] = (DateTime.Today - arrDate).Days;
-            }
-
-            // Slack
-            if (row["Promise_Date"] != DBNull.Value && row["Promise_Date"] is DateTime promDate)
-            {
-                row["Slack"] = (promDate - DateTime.Today).Days;
-            }
-
-            // Priority
-            string prior = row["Prior"]?.ToString()?.Trim() ?? "";
-            string wkprom = row["WkProm"]?.ToString()?.Trim() ?? "";
-            row["Priority"] = prior + wkprom;
+            var val = reader[field];
+            if (val == null || val == DBNull.Value) return 0;
+            return Convert.ToInt32(val);
         }
+        catch { return 0; }
+    }
+
+    private static DateTime? GetDate(System.Data.IDataReader reader, string field)
+    {
+        try
+        {
+            var val = reader[field];
+            if (val == null || val == DBNull.Value) return null;
+            if (val is DateTime dt && dt != DateTime.MinValue) return dt;
+            return null;
+        }
+        catch { return null; }
     }
 
     private void ConfigureGridColumns()
@@ -436,12 +466,8 @@ public class StockInProcForm : Form
         };
 
         // Hide helper columns
-        string[] hidden = { "Prior", "WkProm", "Promise_Date", "Started", "Proc_ID" };
-        foreach (var col in hidden)
-        {
-            if (grid.Columns.Contains(col))
-                grid.Columns[col]!.Visible = false;
-        }
+        if (grid.Columns.Contains("Started"))
+            grid.Columns["Started"]!.Visible = false;
 
         int order = 0;
         foreach (var (name, width) in displayOrder)
@@ -452,11 +478,8 @@ public class StockInProcForm : Form
                 grid.Columns[name]!.Width = width;
                 order++;
 
-                // Right-align numeric columns
                 if (name is "Wafers" or "Strips" or "Pcs" or "Days_In_Proc" or "Slack" or "#")
-                {
                     grid.Columns[name]!.DefaultCellStyle.Alignment = DataGridViewContentAlignment.MiddleRight;
-                }
             }
         }
     }
@@ -484,10 +507,9 @@ public class StockInProcForm : Form
         }
     }
 
-    // === Ctrl+S style sort toggle via column header click ===
+    // === Alt+S sort toggle via column header click ===
     private void OnColumnHeaderClick(object? sender, DataGridViewCellMouseEventArgs e)
     {
-        // Any header click cycles to next sort mode (like Alt+S in Harbour)
         CycleSortOrder();
     }
 
@@ -498,7 +520,6 @@ public class StockInProcForm : Form
         var sortModeArray = (currentProcessId.Trim() == "190.0") ? sortModes190 : sortModes;
         currentSortIndex = (currentSortIndex + 1) % sortModeArray.Length;
 
-        // Reload with new sort
         try
         {
             Cursor = Cursors.WaitCursor;
@@ -544,12 +565,11 @@ public class StockInProcForm : Form
         dlg.CancelButton = btnCancel;
 
         if (dlg.ShowDialog(this) == DialogResult.OK)
-        {
             input = txt.Text.Trim().PadLeft(6);
-        }
-        else return;
+        else
+            return;
 
-        // Search in grid
+        // Search in grid data
         for (int i = 0; i < dtResult.Rows.Count; i++)
         {
             string bId = dtResult.Rows[i]["Batch"]?.ToString()?.Trim() ?? "";
