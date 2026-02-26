@@ -152,7 +152,14 @@ public class StockInWorkForm : Form
             BackgroundColor = Color.White,
             BorderStyle = BorderStyle.None,
             Font = new Font("Consolas", 9.5f),
-            // DoubleBuffered set via reflection for smoother rendering
+            ColumnHeadersDefaultCellStyle = new DataGridViewCellStyle
+            {
+                Font = new Font("Segoe UI", 9f, FontStyle.Bold),
+                BackColor = Color.FromArgb(0, 51, 102),
+                ForeColor = Color.White,
+                Alignment = DataGridViewContentAlignment.MiddleCenter,
+            },
+            EnableHeadersVisualStyles = false,
         };
         grid.CellFormatting += OnCellFormatting;
         // Enable DoubleBuffered via reflection (protected property)
