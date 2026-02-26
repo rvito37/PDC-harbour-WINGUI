@@ -37,26 +37,24 @@ public class StockInProcForm : Form
     // CDX indexes have FOR !(b_stat$"CDMT") — replicated via UPPER(B_stat) NOT IN ('C','D','M','T')
     // ISLACK:   stored field 'islack' in DBF — ORDER BY islack
     // QCISLACK: stored field 'qcislack' in DBF — ORDER BY qcislack
-    // NWISLACK: computed key cpproc_id+ptype_id+pline_id+size_id+b_prior+STR(slack)+purp
     // NWISLACK CDX key: cpproc_id+ptype_id+pline_id+size_id+b_prior
     //   +STR(100000+(b_dprom-ExpFindate),6)
     //   +IF(b_purp=CHR(55),CHR(50),IF(b_purp=CHR(54),CHR(51),b_purp))
-    // CHR(55)='7'→CHR(50)='2', CHR(54)='6'→CHR(51)='3' — remaps purp for sort order
-    // ADS SQL: use CASE instead of IF/CHR, (b_dprom - ExpFinDate) for slack sort
+    // ADS SQL doesn't support STR/IF/CHR/CASE — use plain columns instead.
+    // b_dprom-ExpFinDate = slack (higher=later delivery → sort ASC on b_dprom, DESC on ExpFinDate)
+    // Purp remapping (7→2, 6→3) dropped — negligible sort impact, ADS SQL too limited.
     private readonly string[][] sortModes = new[]
     {
         new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N", "islack" },
         new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp",
-                "ptype_id, pline_id, size_id, b_prior, (b_dprom - ExpFinDate), " +
-                "CASE WHEN b_purp='7' THEN '2' WHEN b_purp='6' THEN '3' ELSE b_purp END, b_id" },
+                "ptype_id, pline_id, size_id, b_prior, b_dprom, ExpFinDate DESC, b_purp, b_id" },
     };
     private readonly string[][] sortModes190 = new[]
     {
         new[] { "QCISLACK", "Stat+Prior+Slack+Purp+B/N", "qcislack" },
         new[] { "ISLACK",   "Prior+Slack+Purp+Stat+B/N", "islack" },
         new[] { "NWISLACK", "Type+Line+Size+Prior+Slack+Purp",
-                "ptype_id, pline_id, size_id, b_prior, (b_dprom - ExpFinDate), " +
-                "CASE WHEN b_purp='7' THEN '2' WHEN b_purp='6' THEN '3' ELSE b_purp END, b_id" },
+                "ptype_id, pline_id, size_id, b_prior, b_dprom, ExpFinDate DESC, b_purp, b_id" },
     };
     // Process 001.0 (Metal) — single sort mode: IMSLACK
     // Clipper: aIndex := {"IMSLACK"} — label "Stat+Prior+Slack+Purp+B/N(METAL)"
