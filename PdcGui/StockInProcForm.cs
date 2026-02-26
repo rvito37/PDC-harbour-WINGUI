@@ -109,7 +109,8 @@ public class StockInProcForm : Form
         cmbProcess = new ComboBox
         {
             Location = new Point(85, 12),
-            Width = 90,
+            Width = 280,
+            DropDownWidth = 320,
             DropDownStyle = ComboBoxStyle.DropDown,
             Font = new Font("Consolas", 11f),
         };
@@ -126,7 +127,7 @@ public class StockInProcForm : Form
         {
             Text = "",
             AutoSize = true,
-            Location = new Point(185, 15),
+            Location = new Point(375, 15),
             Font = new Font("Segoe UI", 10f),
             ForeColor = Color.DarkBlue,
         };
@@ -134,7 +135,7 @@ public class StockInProcForm : Form
         btnQuery = new Button
         {
             Text = "Show WIP",
-            Location = new Point(420, 10),
+            Location = new Point(600, 10),
             Size = new Size(90, 30),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(0, 120, 215),
@@ -146,7 +147,7 @@ public class StockInProcForm : Form
         btnSearch = new Button
         {
             Text = "Find Batch (F4)",
-            Location = new Point(520, 10),
+            Location = new Point(700, 10),
             Size = new Size(110, 30),
             FlatStyle = FlatStyle.Flat,
             Enabled = false,
@@ -156,7 +157,7 @@ public class StockInProcForm : Form
         btnTotals = new Button
         {
             Text = "Totals (Ctrl+T)",
-            Location = new Point(640, 10),
+            Location = new Point(820, 10),
             Size = new Size(110, 30),
             FlatStyle = FlatStyle.Flat,
             Enabled = false,
@@ -167,7 +168,7 @@ public class StockInProcForm : Form
         {
             Text = "",
             AutoSize = true,
-            Location = new Point(760, 15),
+            Location = new Point(940, 15),
             Font = new Font("Consolas", 9f),
             ForeColor = Color.DarkGreen,
         };
@@ -240,8 +241,9 @@ public class StockInProcForm : Form
             foreach (DataRow row in dtProcesses.Rows)
             {
                 string procId = row["proc_id"]?.ToString()?.Trim() ?? "";
+                string procName = row["proc_nme"]?.ToString()?.Trim() ?? "";
                 if (!string.IsNullOrWhiteSpace(procId))
-                    cmbProcess.Items.Add(procId);
+                    cmbProcess.Items.Add(string.IsNullOrEmpty(procName) ? procId : $"{procId} - {procName}");
             }
 
             statusLabel.Text = $"Loaded {cmbProcess.Items.Count} processes. Enter process ID and press Enter or click 'Show WIP'.";
@@ -257,7 +259,9 @@ public class StockInProcForm : Form
     // === Main query: load WIP for selected process ===
     private void ExecuteQuery()
     {
-        string procId = cmbProcess.Text.Trim();
+        // Extract ID from "ID - Description" format in ComboBox
+        string rawText = cmbProcess.Text.Trim();
+        string procId = rawText.Contains(" - ") ? rawText.Split(" - ")[0].Trim() : rawText;
         if (string.IsNullOrWhiteSpace(procId))
         {
             MessageBox.Show("Please enter a Process ID.", "Input Required",
