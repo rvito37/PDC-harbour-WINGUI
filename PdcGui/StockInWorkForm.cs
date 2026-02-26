@@ -89,7 +89,8 @@ public class StockInWorkForm : Form
         cmbWorkstation = new ComboBox
         {
             Location = new Point(115, 12),
-            Width = 90,
+            Width = 280,
+            DropDownWidth = 320,
             DropDownStyle = ComboBoxStyle.DropDown,
             Font = new Font("Consolas", 11f),
             // CharacterCasing not available in WinForms ComboBox; use TextChanged to uppercase
@@ -117,7 +118,7 @@ public class StockInWorkForm : Form
         {
             Text = "",
             AutoSize = true,
-            Location = new Point(215, 15),
+            Location = new Point(405, 15),
             Font = new Font("Segoe UI", 10f),
             ForeColor = Color.DarkBlue,
         };
@@ -125,7 +126,7 @@ public class StockInWorkForm : Form
         btnQuery = new Button
         {
             Text = "Show WIP",
-            Location = new Point(500, 10),
+            Location = new Point(700, 10),
             Size = new Size(90, 30),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(0, 120, 215),
@@ -214,15 +215,16 @@ public class StockInWorkForm : Form
             foreach (DataRow row in dtWorkstations.Rows)
             {
                 string id = row["wkstn_id"]?.ToString()?.Trim() ?? "";
+                string name = row["wkstn_nme"]?.ToString()?.Trim() ?? "";
                 // Skip empty and deleted records (Clipper marks deleted with * prefix)
                 if (!string.IsNullOrEmpty(id) && !id.StartsWith("*"))
-                    cmbWorkstation.Items.Add(id);
+                    cmbWorkstation.Items.Add(string.IsNullOrEmpty(name) ? id : $"{id} - {name}");
             }
 
             // Add GRU groups at the end
             cmbWorkstation.Items.Add("---");
             foreach (var gru in GruGroups)
-                cmbWorkstation.Items.Add($"{gru.Key}");
+                cmbWorkstation.Items.Add($"{gru.Key} - {gru.Value.name}");
 
             if (cmbWorkstation.Items.Count > 0)
                 cmbWorkstation.SelectedIndex = 0;
@@ -259,7 +261,9 @@ public class StockInWorkForm : Form
     // === Main query execution ===
     private void ExecuteQuery()
     {
-        string wkstnId = cmbWorkstation.Text.Trim().ToUpper();
+        // Extract ID from "ID - Description" format in ComboBox
+        string rawText = cmbWorkstation.Text.Trim().ToUpper();
+        string wkstnId = rawText.Contains(" - ") ? rawText.Split(" - ")[0].Trim() : rawText;
         if (string.IsNullOrWhiteSpace(wkstnId) || wkstnId == "---")
         {
             MessageBox.Show("Please enter a Workstation ID.", "Input Required",
