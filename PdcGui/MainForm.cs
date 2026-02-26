@@ -366,7 +366,23 @@ public class MainForm : Form
         var form = new StockInWorkForm(dataDir);
         form.ShowDialog(this);
     }
-    private void OnBatchPath(object? sender, EventArgs e) => ShowNotImplemented("Batch Path Query (BNpath)");
+    private void OnBatchPath(object? sender, EventArgs e)
+    {
+        string dataDir = @"C:\Users\AVXUser\BMS\DATA";
+        if (!Directory.Exists(dataDir))
+        {
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = "Select folder containing D_LINE.DBF, m_linemv.DBF",
+                UseDescriptionForTitle = true,
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            dataDir = dlg.SelectedPath;
+        }
+
+        var form = new BatchPathForm(dataDir);
+        form.ShowDialog(this);
+    }
     private void OnShipQuery(object? sender, EventArgs e) => ShowNotImplemented("Shipments Query (ShpQuery)");
 
     // ===== Shipments (stubs) =====
