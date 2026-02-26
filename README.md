@@ -21,7 +21,7 @@ Working:
   - Alt+S sort toggle: iSlack / nwislack / imslack / qcislack (matching original CDX index expressions)
   - **Real Slack calculation**: `Slack = B_dprom - (Today + LTime_NoRoute)` using m_linemv + c_leadt lead times (matching Clipper DELIVSCH.PRG)
   - Graceful fallback if lead time tables not available
-  - Grey-out styling for started batches
+  - Green row highlighting for started batches (matching Clipper B/Bg colorBlock)
 
 Stubs (pending implementation):
 - Batch Operations (Arrive, Enter, Leave, Cancel, Reprint)
@@ -95,8 +95,8 @@ This reads the same DBF/CDX files as the Clipper/Harbour PDC — both can run si
 
 ## Reference
 
-The original Harbour/Clipper source is in `PDC-clean/` (not in this repo).
-See that project for business logic that will be ported screen by screen.
+The original Clipper source is in `C:\Users\AVXUser\PDC\` (not in this repo).
+This is the authoritative reference for all business logic ported screen by screen.
 
 ## Migration Plan
 

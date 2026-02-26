@@ -53,7 +53,25 @@ public class StockInProcForm : Form
                 "ptype_id, pline_id, size_id, b_prior, STR(100000+(b_dprom-ExpFinDate),6), " +
                 "IF(b_purp=CHR(55),CHR(50),IF(b_purp=CHR(54),CHR(51),b_purp)), b_id" },
     };
+    // Process 001.0 (Metal) — single sort mode: IMSLACK
+    // Clipper: aIndex := {"IMSLACK"} — label "Stat+Prior+Slack+Purp+B/N(METAL)"
+    private readonly string[][] sortModes001 = new[]
+    {
+        new[] { "IMSLACK", "Stat+Prior+Slack+Purp+B/N(METAL)", "imslack" },
+    };
     private int currentSortIndex = 0;
+
+    /// <summary>
+    /// Select sort mode array based on process ID (Clipper: STOKPROC.PRG lines 34-43).
+    /// 190.0 → QCISLACK/ISLACK/NWISLACK, 001.0 → IMSLACK only, other → ISLACK/NWISLACK
+    /// </summary>
+    private string[][] GetSortModes(string procId)
+    {
+        string p = procId.Trim();
+        if (p == "190.0") return sortModes190;
+        if (p == "001.0") return sortModes001;
+        return sortModes;
+    }
 
     public StockInProcForm(string dataDirectory)
     {
@@ -320,7 +338,7 @@ public class StockInProcForm : Form
         using var conn = new AdsConnection(connStr);
         conn.Open();
 
-        var sortModeArray = (procId.Trim() == "190.0") ? sortModes190 : sortModes;
+        var sortModeArray = GetSortModes(procId);
         string indexTag = sortModeArray[currentSortIndex][0];
         string orderBy = sortModeArray[currentSortIndex][2];
 
@@ -670,7 +688,9 @@ public class StockInProcForm : Form
             grid.Columns["Pcs"]!.DefaultCellStyle.Format = "N0";     // Clipper: Transform(,"9,999,999")
     }
 
-    // === Cell formatting: grey out started batches (Cp_dSta not empty) ===
+    // === Cell formatting: green background for started batches (Cp_dSta not empty) ===
+    // Clipper: colorSpec "W+/B,W+/R,B/Bg", colorBlock {||Iif(EMPTY(Cp_dSta),{1,2},{3,2})}
+    // B/Bg = Black text on Green background for started batches
     private void OnCellFormatting(object? sender, DataGridViewCellFormattingEventArgs e)
     {
         if (dtResult == null || e.RowIndex < 0 || e.RowIndex >= dtResult.Rows.Count) return;
@@ -678,11 +698,11 @@ public class StockInProcForm : Form
         var row = dtResult.Rows[e.RowIndex];
         var started = row["Started"];
 
-        // Clipper: colorBlock checks EMPTY(D_line->Cp_dSta) — started batches get dimmed
+        // Clipper: colorBlock checks EMPTY(D_line->Cp_dSta) — started batches get green background
         if (started != DBNull.Value && started is DateTime dt && dt != DateTime.MinValue)
         {
-            e.CellStyle!.ForeColor = Color.Gray;
-            e.CellStyle!.BackColor = Color.FromArgb(245, 245, 245);
+            e.CellStyle!.ForeColor = Color.Black;
+            e.CellStyle!.BackColor = Color.FromArgb(144, 238, 144); // LightGreen — Clipper B/Bg
         }
 
         // Color negative slack red
@@ -703,7 +723,7 @@ public class StockInProcForm : Form
     {
         if (string.IsNullOrEmpty(currentProcessId) || dtResult == null) return;
 
-        var sortModeArray = (currentProcessId.Trim() == "190.0") ? sortModes190 : sortModes;
+        var sortModeArray = GetSortModes(currentProcessId);
         currentSortIndex = (currentSortIndex + 1) % sortModeArray.Length;
 
         try
@@ -720,7 +740,7 @@ public class StockInProcForm : Form
 
     private void UpdateIndexLabel()
     {
-        var sortModeArray = (currentProcessId.Trim() == "190.0") ? sortModes190 : sortModes;
+        var sortModeArray = GetSortModes(currentProcessId);
         if (currentSortIndex < sortModeArray.Length)
             lblIndexInfo.Text = $"Index: {sortModeArray[currentSortIndex][1]}";
     }
