@@ -209,30 +209,32 @@ public class BatchPathForm : Form
             conn.Open();
 
             // Step 1: Validate batch exists in D_LINE
-            string sqlCheck = $"SELECT TOP 1 B_id, b_purp, b_type, esnxx_id, pline_id, CP_PCCODE " +
-                              $"FROM \"D_LINE.DBF\" WHERE B_id = '{batchId}'";
-            using var cmdCheck = new AdsCommand(sqlCheck, conn);
-            using var rdrCheck = cmdCheck.ExecuteReader();
-
-            if (!rdrCheck.Read())
-            {
-                MessageBox.Show($"Batch {batchId} not found!", "Not Found",
-                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                statusLabel.Text = $"Batch {batchId} not found.";
-                Cursor = Cursors.Default;
-                txtBatchNumber.Focus();
-                txtBatchNumber.SelectAll();
-                return;
-            }
-
-            // Grab D_LINE fields for lookups
-            string bPurp = rdrCheck["b_purp"]?.ToString()?.Trim() ?? "";
-            string bType = rdrCheck["b_type"]?.ToString()?.Trim() ?? "";
-            string esnxxId = rdrCheck["esnxx_id"]?.ToString() ?? "";
-            string plineId = rdrCheck["pline_id"]?.ToString() ?? "";
+            string bPurp = "", bType = "", esnxxId = "", plineId = "";
             int pcCode = 0;
-            try { pcCode = Convert.ToInt32(rdrCheck["CP_PCCODE"]); } catch { }
-            rdrCheck.Close();
+
+            using (var cmdCheck = new AdsCommand(
+                $"SELECT TOP 1 B_id, b_purp, b_type, esnxx_id, pline_id, CP_PCCODE " +
+                $"FROM \"D_LINE.DBF\" WHERE B_id = '{batchId}'", conn))
+            using (var rdrCheck = cmdCheck.ExecuteReader())
+            {
+                if (!rdrCheck.Read())
+                {
+                    MessageBox.Show($"Batch {batchId} not found!", "Not Found",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    statusLabel.Text = $"Batch {batchId} not found.";
+                    Cursor = Cursors.Default;
+                    txtBatchNumber.Focus();
+                    txtBatchNumber.SelectAll();
+                    return;
+                }
+
+                // Grab D_LINE fields for lookups
+                bPurp = rdrCheck["b_purp"]?.ToString()?.Trim() ?? "";
+                bType = rdrCheck["b_type"]?.ToString()?.Trim() ?? "";
+                esnxxId = rdrCheck["esnxx_id"]?.ToString()?.Trim() ?? "";
+                plineId = rdrCheck["pline_id"]?.ToString()?.Trim() ?? "";
+                try { pcCode = Convert.ToInt32(rdrCheck["CP_PCCODE"]); } catch { }
+            } // cmdCheck + rdrCheck fully disposed here
 
             // Step 2: Lookup purpose name (c_bpurp)
             string purposeName = LookupPurpose(conn, bPurp);
@@ -303,13 +305,20 @@ public class BatchPathForm : Form
         if (string.IsNullOrWhiteSpace(bType)) return "";
         try
         {
-            // Clipper: DbSeek(d_line->b_type+d_line->esnxx_id+d_line->pline_id) using ibtype index
-            string sql = $"SELECT btype_nme FROM \"c_btype.DBF\" WHERE " +
-                         $"b_type = '{bType}' AND esnxx_id = '{esnxxId}' AND pline_id = '{plineId}'";
-            using var cmd = new AdsCommand(sql, conn);
-            using var rdr = cmd.ExecuteReader();
-            if (rdr.Read())
-                return rdr["btype_nme"]?.ToString()?.Trim() ?? "";
+            // c_btype.CDX has alias-qualified index key (c_btype->field) which causes ADS Error 3010
+            // in SQL mode. Use DbfDataReader (no ADS/CDX dependency) to read the table directly.
+            string tablePath = Path.Combine(dataDir, "c_btype.DBF");
+            if (!File.Exists(tablePath)) return "";
+            var options = new DbfDataReader.DbfDataReaderOptions { SkipDeletedRecords = true };
+            using var rdr = new DbfDataReader.DbfDataReader(tablePath, options);
+            while (rdr.Read())
+            {
+                string bt = rdr["b_type"]?.ToString()?.Trim() ?? "";
+                string es = rdr["esnxx_id"]?.ToString()?.Trim() ?? "";
+                string pl = rdr["pline_id"]?.ToString()?.Trim() ?? "";
+                if (bt == bType && es == esnxxId && pl == plineId)
+                    return rdr["btype_nme"]?.ToString()?.Trim() ?? "";
+            }
         }
         catch { /* c_btype.DBF may not exist */ }
         return "";
