@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PlatformTarget>x86</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Advantage.Data.Provider" Version="8.10.1.2" />
+  </ItemGroup>
+
+  <!-- Copy ADS native DLLs from PdcGui\ADS to output root -->
+  <ItemGroup>
+    <None Include="..\PdcGui\ADS\ace32.dll" Link="ace32.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\PdcGui\ADS\adsloc32.dll" Link="adsloc32.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\PdcGui\ADS\axcws32.dll" Link="axcws32.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\PdcGui\ADS\adslocal.cfg" Link="adslocal.cfg" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\PdcGui\ADS\ansi.chr" Link="ansi.chr" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\PdcGui\ADS\extend.chr" Link="extend.chr" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

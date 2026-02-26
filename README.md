@@ -5,7 +5,7 @@ Replaces the Clipper/Harbour console UI with C# WinForms while preserving the sa
 
 ## Status
 
-**Phase 0 — Scaffold + ADS integration complete.**
+**Phase 1 — Read-only queries in progress.**
 
 Working:
 - Login dialog
@@ -15,10 +15,17 @@ Working:
 - Fallback to DbfDataReader if ADS unavailable
 - Status bar with ADS status, user info, and clock
 - Keyboard shortcuts (F1-F6)
+- **WIP by Process (StockInProc)** — fully working query screen:
+  - Process selector from C_PROC.DBF
+  - Batch grid with all original Clipper columns (Batch, Pu, St, P_Line, Val, Strips, Pcs, Days, Slack, Priority, Cust, PO, Started)
+  - Alt+S sort toggle: iSlack / nwislack / imslack / qcislack (matching original CDX index expressions)
+  - **Real Slack calculation**: `Slack = B_dprom - (Today + LTime_NoRoute)` using m_linemv + c_leadt lead times (matching Clipper DELIVSCH.PRG)
+  - Graceful fallback if lead time tables not available
+  - Grey-out styling for started batches
 
 Stubs (pending implementation):
 - Batch Operations (Arrive, Enter, Leave, Cancel, Reprint)
-- Queries (WIP by Process, WIP by Workstation, Batch Path)
+- Queries (WIP by Workstation, Batch Path)
 - Shipments (Outside Prod, Proforma Invoice)
 - Labels (Packing, Production)
 - Reports (Yield Analysis, Production Area Stages)
@@ -46,16 +53,19 @@ dotnet run -- VITALY
 ```
 PDC-harbour-WINGUI/
   PdcGui/
-    PdcGui.csproj      .NET 8 WinForms project (x86 target)
-    Program.cs          Entry point + login dialog
-    MainForm.cs         Main window, menu, ADS/DBF viewer
+    PdcGui.csproj          .NET 8 WinForms project (x86 target)
+    Program.cs              Entry point + login dialog
+    MainForm.cs             Main window, menu, ADS/DBF viewer
+    StockInProcForm.cs      WIP by Process query (Clipper STOKPROC.PRG)
     ADS/
-      ace32.dll         ADS client library (32-bit)
-      adsloc32.dll      ADS Local Server engine
-      axcws32.dll       ADS communication layer
-      adslocal.cfg      Local server configuration
-      ansi.chr          ANSI character set
-      extend.chr        Extended character set
+      ace32.dll             ADS client library (32-bit)
+      adsloc32.dll          ADS Local Server engine
+      axcws32.dll           ADS communication layer
+      adslocal.cfg          Local server configuration
+      ansi.chr              ANSI character set
+      extend.chr            Extended character set
+  TestQuery/
+    Program.cs              Standalone ADS query test utility
 ```
 
 ## NuGet Packages
@@ -72,7 +82,16 @@ The app uses ADS Local Server mode (no server license required):
 Data Source={directory};ServerType=LOCAL;TableType=CDX;LockMode=COMPATIBLE;CharType=OEM;
 ```
 
-This reads the same DBF/CDX files as the Harbour PDC — both can run simultaneously against the same data.
+This reads the same DBF/CDX files as the Clipper/Harbour PDC — both can run simultaneously against the same data.
+
+### Required Data Tables
+
+| Table | Records | Purpose |
+|-------|---------|---------|
+| D_LINE.DBF | ~134K | WIP batch data |
+| C_PROC.DBF | ~50 | Process definitions |
+| m_linemv.DBF | ~3.3M | Batch movement steps (for Slack/LTime) |
+| c_leadt.DBF | ~17K | Lead times per process type (for Slack/LTime) |
 
 ## Reference
 
@@ -84,7 +103,7 @@ See that project for business logic that will be ported screen by screen.
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Scaffold + ADS + DBF viewer | Done |
-| 1 | Read-only queries (WIP, Batch Path, Shipments) | Next |
+| 1 | Read-only queries (WIP, Batch Path, Shipments) | In Progress |
 | 2 | Input forms (Batch Arrive/Enter/Leave) | Planned |
 | 3 | Shipments + Label printing | Planned |
 | 4 | Reports (Yield, Production Area) | Planned |

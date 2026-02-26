@@ -4,9 +4,10 @@ using Advantage.Data.Provider;
 namespace PdcGui;
 
 /// <summary>
-/// WIP by Process query screen — migrated from Harbour STOKPROC.PRG
-/// Uses ADS SQL with CDX index field ordering, matching original Harbour sort/filter behavior.
-/// Read-only view. Data source: D_LINE.DBF + C_PROC.DBF via ADS.
+/// WIP by Process query screen — migrated from Clipper STOKPROC.PRG
+/// Uses ADS SQL with CDX index field ordering, matching original Clipper sort/filter behavior.
+/// Slack = B_dprom - (Today + LTime_NoRoute) — uses m_linemv + c_leadt for lead times.
+/// Read-only view. Data source: D_LINE.DBF + C_PROC.DBF + m_linemv.DBF + c_leadt.DBF via ADS.
 /// </summary>
 public class StockInProcForm : Form
 {
@@ -29,8 +30,9 @@ public class StockInProcForm : Form
     private DataTable? dtProcesses;
     private DataTable? dtResult;
     private string currentProcessId = "";
+    private bool hasLeadTimeData = false; // true if m_linemv + c_leadt tables available
 
-    // Sort modes matching Harbour CDX index tags
+    // Sort modes matching Clipper CDX index tags
     // [0]=tag name (display), [1]=display label, [2]=SQL ORDER BY clause
     // CDX indexes have FOR !(b_stat$"CDMT") — replicated via UPPER(B_stat) NOT IN ('C','D','M','T')
     // ISLACK:   stored field 'islack' in DBF — ORDER BY islack
@@ -333,12 +335,16 @@ public class StockInProcForm : Form
         dtResult = BuildDataTable();
         int rowNum = 0;
 
+        // Collect batch IDs first for bulk lead time lookup
+        var batchRows = new List<(DataRow row, string batchId, DateTime? promDate)>();
+
         while (reader.Read())
         {
             rowNum++;
             var row = dtResult.NewRow();
             row["#"] = rowNum;
-            row["Batch"] = reader["B_id"]?.ToString()?.Trim() ?? "";
+            string batchId = reader["B_id"]?.ToString()?.Trim() ?? "";
+            row["Batch"] = batchId;
             row["Pu"] = reader["B_purp"]?.ToString()?.Trim() ?? "";
             row["St"] = reader["B_stat"]?.ToString()?.Trim() ?? "";
             row["P_Line"] = reader["pLine_id"]?.ToString()?.Trim() ?? "";
@@ -359,10 +365,9 @@ public class StockInProcForm : Form
                 row["Days_In_Proc"] = (DateTime.Today - arrDate.Value).Days;
 
             var promDate = GetDate(reader, "B_dprom");
-            if (promDate.HasValue)
-                row["Slack"] = (promDate.Value - DateTime.Today).Days;
+            // Slack will be calculated after lead time lookup (below)
 
-            // Priority = B_prior + B_wkprom (concatenated like Harbour)
+            // Priority = B_prior + B_wkprom (concatenated like Clipper)
             string prior = reader["B_prior"]?.ToString()?.Trim() ?? "";
             string wkprom = reader["B_wkprom"]?.ToString()?.Trim() ?? "";
             row["Priority"] = prior + wkprom;
@@ -376,6 +381,32 @@ public class StockInProcForm : Form
             row["Started"] = startedDate.HasValue ? startedDate.Value : DBNull.Value;
 
             dtResult.Rows.Add(row);
+            batchRows.Add((row, batchId, promDate));
+        }
+
+        // === Calculate Slack with LTime_NoRoute (Clipper: DELIVSCH.PRG) ===
+        // Load lead times and batch steps in bulk for performance
+        var leadTimes = LoadLeadTimes(conn);
+        var allBatchIds = batchRows.Where(b => b.promDate.HasValue).Select(b => b.batchId);
+        var batchSteps = LoadBatchSteps(conn, allBatchIds);
+        hasLeadTimeData = (leadTimes != null && batchSteps != null);
+
+        foreach (var (row, batchId, promDate) in batchRows)
+        {
+            if (!promDate.HasValue) continue;
+
+            if (hasLeadTimeData)
+            {
+                // Clipper: Slack = b_dprom - (date() + LTime_NoRoute)
+                batchSteps!.TryGetValue(batchId, out var steps);
+                int ltime = CalcLTimeNoRoute(steps, leadTimes);
+                row["Slack"] = (promDate.Value - DateTime.Today).Days - ltime;
+            }
+            else
+            {
+                // Fallback: no lead time tables → Slack = b_dprom - date()
+                row["Slack"] = (promDate.Value - DateTime.Today).Days;
+            }
         }
 
         if (dtResult.Rows.Count == 0)
@@ -394,7 +425,8 @@ public class StockInProcForm : Form
         ConfigureGridColumns();
 
         countLabel.Text = $"Records: {dtResult.Rows.Count}";
-        statusLabel.Text = $"WIP for process {procId.Trim()} — {lblProcessName.Text} — {dtResult.Rows.Count} active batches [{indexTag}]";
+        string ltimeInfo = hasLeadTimeData ? "" : " [Slack: no lead time data]";
+        statusLabel.Text = $"WIP for process {procId.Trim()} — {lblProcessName.Text} — {dtResult.Rows.Count} active batches [{indexTag}]{ltimeInfo}";
     }
 
     private static DataTable BuildDataTable()
@@ -445,11 +477,150 @@ public class StockInProcForm : Form
         catch { return null; }
     }
 
+    // === LTime_NoRoute: lead time calculation matching Clipper DELIVSCH.PRG ===
+
+    /// <summary>
+    /// Load all c_leadt records into a dictionary for fast lookup.
+    /// Key: ptype_id + proc_id + pline_id (or ptype_id + proc_id for U/_/K types)
+    /// Value: LEADT_DAYS
+    /// Source: Clipper BMS\DELIVSCH.PRG, c_leadt index "itcppr"
+    /// </summary>
+    private static Dictionary<string, double>? LoadLeadTimes(AdsConnection conn)
+    {
+        try
+        {
+            string sql = "SELECT ptype_id, proc_id, pline_id, LEADT_DAYS FROM \"c_leadt.DBF\"";
+            using var cmd = new AdsCommand(sql, conn);
+            using var reader = cmd.ExecuteReader();
+
+            var dict = new Dictionary<string, double>();
+            while (reader.Read())
+            {
+                string ptype = reader["ptype_id"]?.ToString() ?? "";
+                string proc  = reader["proc_id"]?.ToString() ?? "";
+                string pline = reader["pline_id"]?.ToString() ?? "";
+                double days  = 0;
+                try { days = Convert.ToDouble(reader["LEADT_DAYS"]); } catch { }
+
+                // Store both full key and short key (for U/_/K types)
+                string fullKey = ptype + proc + pline;
+                string shortKey = ptype + proc;
+                dict.TryAdd(fullKey, days);
+                dict.TryAdd(shortKey, days);
+            }
+            return dict;
+        }
+        catch
+        {
+            return null; // c_leadt.DBF not available
+        }
+    }
+
+    /// <summary>
+    /// Load m_linemv steps for a set of batch IDs, grouped by batch.
+    /// Returns dict: batchId → list of (ptype_id, cpproc_id, pline_id, fin) ordered by cp_stage.
+    /// Source: Clipper BMS\DELIVSCH.PRG lines 1046-1065
+    /// </summary>
+    private static Dictionary<string, List<(string ptype, string proc, string pline, bool fin)>>?
+        LoadBatchSteps(AdsConnection conn, IEnumerable<string> batchIds)
+    {
+        try
+        {
+            // Build IN clause for all batches
+            var ids = string.Join(",", batchIds.Select(b => $"'{b}'"));
+            if (string.IsNullOrEmpty(ids)) return null;
+
+            string sql = $"SELECT B_ID, PTYPE_ID, CPPROC_ID, PLINE_ID, FIN, cp_stage " +
+                         $"FROM \"m_linemv.DBF\" WHERE B_ID IN ({ids}) ORDER BY B_ID, cp_stage";
+            using var cmd = new AdsCommand(sql, conn);
+            using var reader = cmd.ExecuteReader();
+
+            var dict = new Dictionary<string, List<(string, string, string, bool)>>();
+            while (reader.Read())
+            {
+                string bid   = reader["B_ID"]?.ToString()?.Trim() ?? "";
+                string ptype = reader["PTYPE_ID"]?.ToString() ?? "";
+                string proc  = reader["CPPROC_ID"]?.ToString() ?? "";
+                string pline = reader["PLINE_ID"]?.ToString() ?? "";
+                bool fin     = false;
+                try
+                {
+                    var finVal = reader["FIN"];
+                    fin = finVal is bool b ? b : Convert.ToBoolean(finVal);
+                }
+                catch { }
+
+                if (!dict.ContainsKey(bid))
+                    dict[bid] = new List<(string, string, string, bool)>();
+                dict[bid].Add((ptype, proc, pline, fin));
+            }
+            return dict;
+        }
+        catch
+        {
+            return null; // m_linemv.DBF not available
+        }
+    }
+
+    /// <summary>
+    /// Calculate LTime_NoRoute for a single batch.
+    /// Matching Clipper DELIVSCH.PRG lines 1017-1079:
+    ///   1. Find batch steps ordered by stage
+    ///   2. Skip finished steps (FIN = true)
+    ///   3. For remaining steps, sum lead times from c_leadt
+    ///   4. Round up if fractional (NotCommas function)
+    /// </summary>
+    private static int CalcLTimeNoRoute(
+        List<(string ptype, string proc, string pline, bool fin)>? steps,
+        Dictionary<string, double>? leadTimes)
+    {
+        if (steps == null || leadTimes == null) return 0;
+
+        double totalDays = 0;
+        bool pastFinished = false;
+
+        foreach (var (ptype, proc, pline, fin) in steps)
+        {
+            // Skip past all finished steps (Clipper: WHILE FIN; dbskip; END)
+            if (!pastFinished)
+            {
+                if (fin) continue;
+                pastFinished = true;
+            }
+
+            // Look up lead time
+            // Clipper: IF m_linemv->PTYPE_ID $ "U_K" → seek by PTYPE_ID + CPPROC_ID only
+            // The $ operator means "is contained in", so PTYPE_ID is a single char checked
+            // against "U_K" — matches 'U', '_', or 'K'
+            double days = 0;
+            string ptypeChar = ptype.Length > 0 ? ptype.Substring(0, 1) : "";
+            if (ptypeChar == "U" || ptypeChar == "_" || ptypeChar == "K")
+            {
+                // Short key: ptype + proc (Clipper: c_leadt->(DBSEEK(PTYPE_ID + CPPROC_ID)))
+                string key = ptype + proc;
+                leadTimes.TryGetValue(key, out days);
+            }
+            else
+            {
+                // Full key: ptype + proc + pline
+                string key = ptype + proc + pline;
+                leadTimes.TryGetValue(key, out days);
+            }
+
+            totalDays += days;
+        }
+
+        // NotCommas: round up if fractional (Clipper AVXFUNCS.PRG line 3954)
+        if (totalDays % 1 > 0)
+            return (int)totalDays + 1;
+        return (int)totalDays;
+    }
+
     private void ConfigureGridColumns()
     {
         if (grid.Columns.Count == 0) return;
 
-        // Define display order matching Harbour English layout
+        // Define display order matching Clipper English layout
         var displayOrder = new[]
         {
             ("#",             40),
@@ -492,11 +663,11 @@ public class StockInProcForm : Form
 
         // Number formatting matching Harbour Transform patterns
         if (grid.Columns.Contains("Val"))
-            grid.Columns["Val"]!.DefaultCellStyle.Format = "N3";     // Harbour: Value_id (decimal 9,3)
+            grid.Columns["Val"]!.DefaultCellStyle.Format = "N3";     // Clipper: Value_id (decimal 9,3)
         if (grid.Columns.Contains("Strips"))
-            grid.Columns["Strips"]!.DefaultCellStyle.Format = "N0";  // Harbour: Transform(,"99,999")
+            grid.Columns["Strips"]!.DefaultCellStyle.Format = "N0";  // Clipper: Transform(,"99,999")
         if (grid.Columns.Contains("Pcs"))
-            grid.Columns["Pcs"]!.DefaultCellStyle.Format = "N0";     // Harbour: Transform(,"9,999,999")
+            grid.Columns["Pcs"]!.DefaultCellStyle.Format = "N0";     // Clipper: Transform(,"9,999,999")
     }
 
     // === Cell formatting: grey out started batches (Cp_dSta not empty) ===
@@ -507,7 +678,7 @@ public class StockInProcForm : Form
         var row = dtResult.Rows[e.RowIndex];
         var started = row["Started"];
 
-        // Harbour: colorBlock checks EMPTY(D_line->Cp_dSta) — started batches get dimmed
+        // Clipper: colorBlock checks EMPTY(D_line->Cp_dSta) — started batches get dimmed
         if (started != DBNull.Value && started is DateTime dt && dt != DateTime.MinValue)
         {
             e.CellStyle!.ForeColor = Color.Gray;
