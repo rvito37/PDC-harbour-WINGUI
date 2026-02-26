@@ -352,7 +352,7 @@ public class BatchPathForm : Form
                 return $"{lastLoc} #{lastDate} #{lastTime}";
         }
         catch { /* m_loc.DBF may not exist */ }
-        return "N/A";
+        return "Prod. floor";
     }
 
     // ========== Pack Memo (CP_PCCODE >= 4550) ==========
