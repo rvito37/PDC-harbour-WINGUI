@@ -30,10 +30,18 @@ Working:
   - GRU groups filter by CDX process sets (Substrate Cleaning, Lito, Polymid, Chemical, Electroplating, Cure, Measurements, ET-6)
   - Real Slack calculation (shared SlackCalculator)
   - Green row highlighting for started batches
+- **Batch Path Query (BatchPath)** — fully working query screen:
+  - 6-digit batch number input (digits only, zero-padded)
+  - Info panel: Purpose (c_bpurp), Type (c_btype), B/N, Location (m_loc)
+  - 9-column grid: Pr, Stage, Process & Name, Wfr, Str, Pcs, Arrive/Start/Finish DateTimes
+  - Green row highlighting for in-progress stages (arrived but not finished)
+  - Pack memo popup for CP_PCCODE ≥ 4550 (read-only)
+  - Two-level ESC: grid → input → close (matching Clipper behavior)
+  - c_btype lookup via DbfDataReader (bypasses CDX Error 3010)
+  - Location defaults to "Prod. floor" when m_loc has no data
 
 Stubs (pending implementation):
 - Batch Operations (Arrive, Enter, Leave, Cancel, Reprint)
-- Queries (Batch Path)
 - Shipments (Outside Prod, Proforma Invoice)
 - Labels (Packing, Production)
 - Reports (Yield Analysis, Production Area Stages)
@@ -66,6 +74,7 @@ PDC-harbour-WINGUI/
     MainForm.cs             Main window, menu, ADS/DBF viewer
     StockInProcForm.cs      WIP by Process query (Clipper STOKPROC.PRG)
     StockInWorkForm.cs      WIP by Workstation query (Clipper STOKWORK.PRG)
+    BatchPathForm.cs        Batch Path Query (Clipper BNPATH.PRG)
     SlackCalculator.cs      Shared Slack/LTime_NoRoute calculation
     ADS/
       ace32.dll             ADS client library (32-bit)
@@ -108,6 +117,7 @@ ADS Local Server uses a limited SQL dialect, **not** full SQL-92. Known limitati
 | `CHR()` function | **Not supported** in SQL | Use literal chars: `CHR(55)` → `'7'` |
 | `CASE WHEN ... END` | **Not supported** in ORDER BY | Use plain columns |
 | ISAM `Seek`/`SetRange` on conditional CDX | **Error 7038** | Use SQL `WHERE` instead |
+| CDX with alias-qualified keys (`table->field`) | **Error 3010** | Use `DbfDataReader` NuGet to read DBF directly, bypassing CDX |
 | Computed expressions in ORDER BY | **Very limited** | Use stored index fields (islack, qcislack, imslack) or plain columns |
 
 **Key insight:** CDX indexes like ISLACK, QCISLACK, IMSLACK store precomputed sort keys as fields in the DBF.
@@ -123,6 +133,9 @@ For computed indexes like NWISLACK (no stored field), use the individual columns
 | m_linemv.DBF | ~3.3M | Batch movement steps (for Slack/LTime_NoRoute) |
 | c_leadt.DBF | ~17K | Lead times per process type (for Slack/LTime_NoRoute) |
 | C_WKSTN.DBF | ~15 | Workstation definitions (wkstn_id, wkstn_nme) |
+| C_BPURP.DBF | ~10 | Batch purpose codes (b_purp → bpurp_nme) |
+| C_BTYPE.DBF | ~50 | Batch type codes (b_type+esnxx_id+pline_id → btype_nme) |
+| M_LOC.DBF | ~1 | Batch location tracking (b_id → loc_nme) |
 
 ## Reference
 
@@ -135,6 +148,7 @@ Key Clipper source files:
 | STOKPROC.PRG | StockInProcForm.cs | WIP by Process query |
 | STOKWORK.PRG | StockInWorkForm.cs | WIP by Workstation query |
 | DELIVSCH.PRG | SlackCalculator.cs | Slack / LTime_NoRoute calculation |
+| BNPATH.PRG | BatchPathForm.cs | Batch Path Query |
 | AVXFUNCS.PRG | (inline) | Shared utility functions (Slack, NotCommas) |
 
 ## Migration Plan
