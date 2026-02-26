@@ -22,10 +22,16 @@ Working:
   - **Real Slack calculation**: `Slack = B_dprom - (Today + LTime_NoRoute)` using m_linemv + c_leadt lead times (matching Clipper DELIVSCH.PRG)
   - Graceful fallback if lead time tables not available
   - Green row highlighting for started batches (matching Clipper B/Bg colorBlock)
+- **WIP by Workstation (StockInWork)** — fully working query screen:
+  - Individual workstation filter (CPWKSTN_ID) or GRU0-GRU7 process groups
+  - 12 columns: Pu, Esn, Batch, Wfr, Pcs, Proc, Proc Name, St, Pr, Days, Slack, Comments
+  - GRU groups filter by CDX process sets (Substrate Cleaning, Lito, Polymid, Chemical, Electroplating, Cure, Measurements, ET-6)
+  - Real Slack calculation (shared SlackCalculator)
+  - Green row highlighting for started batches
 
 Stubs (pending implementation):
 - Batch Operations (Arrive, Enter, Leave, Cancel, Reprint)
-- Queries (WIP by Workstation, Batch Path)
+- Queries (Batch Path)
 - Shipments (Outside Prod, Proforma Invoice)
 - Labels (Packing, Production)
 - Reports (Yield Analysis, Production Area Stages)
@@ -57,6 +63,8 @@ PDC-harbour-WINGUI/
     Program.cs              Entry point + login dialog
     MainForm.cs             Main window, menu, ADS/DBF viewer
     StockInProcForm.cs      WIP by Process query (Clipper STOKPROC.PRG)
+    StockInWorkForm.cs      WIP by Workstation query (Clipper STOKWORK.PRG)
+    SlackCalculator.cs      Shared Slack/LTime_NoRoute calculation
     ADS/
       ace32.dll             ADS client library (32-bit)
       adsloc32.dll          ADS Local Server engine
@@ -92,6 +100,7 @@ This reads the same DBF/CDX files as the Clipper/Harbour PDC — both can run si
 | C_PROC.DBF | ~50 | Process definitions |
 | m_linemv.DBF | ~3.3M | Batch movement steps (for Slack/LTime) |
 | c_leadt.DBF | ~17K | Lead times per process type (for Slack/LTime) |
+| C_WKSTN.DBF | ~10 | Workstation definitions |
 
 ## Reference
 

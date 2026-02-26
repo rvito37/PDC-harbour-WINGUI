@@ -349,7 +349,23 @@ public class MainForm : Form
         var form = new StockInProcForm(dataDir);
         form.ShowDialog(this);
     }
-    private void OnStockInWork(object? sender, EventArgs e) => ShowNotImplemented("WIP by Workstation (StockInWork)");
+    private void OnStockInWork(object? sender, EventArgs e)
+    {
+        string dataDir = @"C:\Users\AVXUser\BMS\DATA";
+        if (!Directory.Exists(dataDir))
+        {
+            using var dlg = new FolderBrowserDialog
+            {
+                Description = "Select folder containing D_LINE.DBF, C_WKSTN.DBF",
+                UseDescriptionForTitle = true,
+            };
+            if (dlg.ShowDialog() != DialogResult.OK) return;
+            dataDir = dlg.SelectedPath;
+        }
+
+        var form = new StockInWorkForm(dataDir);
+        form.ShowDialog(this);
+    }
     private void OnBatchPath(object? sender, EventArgs e) => ShowNotImplemented("Batch Path Query (BNpath)");
     private void OnShipQuery(object? sender, EventArgs e) => ShowNotImplemented("Shipments Query (ShpQuery)");
 
