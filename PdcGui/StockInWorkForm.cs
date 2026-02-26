@@ -214,7 +214,8 @@ public class StockInWorkForm : Form
             foreach (DataRow row in dtWorkstations.Rows)
             {
                 string id = row["wkstn_id"]?.ToString()?.Trim() ?? "";
-                if (!string.IsNullOrEmpty(id))
+                // Skip empty and deleted records (Clipper marks deleted with * prefix)
+                if (!string.IsNullOrEmpty(id) && !id.StartsWith("*"))
                     cmbWorkstation.Items.Add(id);
             }
 
@@ -225,10 +226,13 @@ public class StockInWorkForm : Form
 
             if (cmbWorkstation.Items.Count > 0)
                 cmbWorkstation.SelectedIndex = 0;
+
+            statusLabel.Text = $"Loaded {dtWorkstations.Rows.Count} workstations + {GruGroups.Count} groups. Select and press Enter.";
         }
         catch (Exception ex)
         {
             statusLabel.Text = $"Cannot load workstations: {ex.Message}";
+            // Still allow manual entry — validation will fallback to D_LINE check
         }
     }
 
@@ -239,13 +243,13 @@ public class StockInWorkForm : Form
         procNameCache = new Dictionary<string, string>();
         try
         {
-            string sql = "SELECT proc_id, PROC_NMH FROM \"C_PROC.DBF\"";
+            string sql = "SELECT proc_id, PROC_NME FROM \"C_PROC.DBF\"";
             using var cmd = new AdsCommand(sql, conn);
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
                 string id = reader["proc_id"]?.ToString() ?? "";
-                string name = reader["PROC_NMH"]?.ToString()?.Trim() ?? "";
+                string name = reader["PROC_NME"]?.ToString()?.Trim() ?? "";
                 procNameCache.TryAdd(id, name);
             }
         }
@@ -271,8 +275,8 @@ public class StockInWorkForm : Form
             Application.DoEvents();
 
             // Validate workstation and get display name
-            string wkstnName = ValidateWorkstation(wkstnId);
-            if (wkstnName == null!)
+            string? wkstnName = ValidateWorkstation(wkstnId);
+            if (wkstnName == null)
             {
                 Cursor = Cursors.Default;
                 return;
@@ -299,13 +303,13 @@ public class StockInWorkForm : Form
     /// Validate workstation ID against C_WKSTN or GRU groups.
     /// Clipper: postWork() in STOKWORK.PRG lines 100-144
     /// </summary>
-    private string ValidateWorkstation(string wkstnId)
+    private string? ValidateWorkstation(string wkstnId)
     {
         // Check GRU groups first
         if (GruGroups.TryGetValue(wkstnId, out var gru))
             return gru.name;
 
-        // Check C_WKSTN table
+        // Check C_WKSTN table (preloaded)
         if (dtWorkstations != null)
         {
             foreach (DataRow row in dtWorkstations.Rows)
@@ -316,9 +320,23 @@ public class StockInWorkForm : Form
             }
         }
 
+        // Fallback: check D_LINE directly — workstation may exist in data even if C_WKSTN load failed
+        try
+        {
+            string connStr = $"Data Source={dataDir};ServerType=LOCAL;TableType=CDX;LockMode=COMPATIBLE;CharType=OEM;TrimTrailingSpaces=TRUE;";
+            using var conn = new AdsConnection(connStr);
+            conn.Open();
+            string sql = $"SELECT TOP 1 CPWKSTN_ID FROM \"D_LINE.DBF\" WHERE CPWKSTN_ID = '{wkstnId}'";
+            using var cmd = new AdsCommand(sql, conn);
+            var result = cmd.ExecuteScalar();
+            if (result != null)
+                return wkstnId; // exists in D_LINE, use ID as name
+        }
+        catch { }
+
         MessageBox.Show($"Workstation '{wkstnId}' not found.", "Not Found",
             MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        return null!;
+        return null;
     }
 
     /// <summary>
